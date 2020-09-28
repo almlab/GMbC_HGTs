@@ -6,7 +6,9 @@ This repository contains scripts and command lines used to generate and analyze 
 Scripts contain command lines for:
 
 Genome assembly, genome annotation and taxonomic calling
+
 Core and Pan-genome analysis
+
 Processing of shotgun metagenomics data
 
 Data files contain:
