@@ -1,0 +1,25 @@
+##############################################################
+########### Detecting HGTs using Blast approaches ############
+##############################################################
+
+#For all genome pairs, we run a Blast search, and only conserve hits with 100% similarity:
+blastn -query genome1_final.scaffolds.fasta -subject genome2_final.scaffolds.fasta -perc_identity 100 -outfmt 6 -out result_blast_genome1_genome2.out
+
+#Next we concatenate all output files together to create a complete blast table:
+all_blast_results_HGT.out
+
+#Next we parse the blast table to filter out HGT hits with length lower than 500bp, and that involve contigs with coverage lower than 3 (as inferred by Spades):
+all_blast_results_HGT_min500bp.out
+
+#Now we filter out HGTs with low coverage compared to the median genome coverage. 
+#We first compute the per-base coverage of each genome assembly, by mapping genome reads against assemblies:
+#Example for 1 genome:
+bowtie2-build genome1_final.scaffolds.fasta genome1_final.scaffolds.fasta
+bowtie2 -1 genome1.R1.trim.fastq -2 genome1.R2.trim.fastq -x genome1_final.scaffolds.fasta -S genome1_reads.aligned.sam --no-unal --n-ceil L,0,0.01 --dovetail --no-mixed -D 25 -R 4 -N 0 -L 18 -i S,1,0.50 -X 2000
+samtools view -b -o genome1_reads.aligned.bam genome1_reads.aligned.sam
+samtools sort -o genome1_reads.aligned.sorted.bam genome1_reads.aligned.bam
+samtools depth -aa -Q30 -q30 -l50 genome1_reads.aligned.sorted.bam > genome1_reads.aligned.sorted.depth
+
+#Using all per-base genome coverages and blast hit coordinates, a simple script was used to filter out blast hits with low relative coverage compared to the median coverage of the two genomes involved in the blast hit/HGT. We filtered out HGTs that involved a blast hit with a relative coverage lower than 0.2 in at least one of the two compared genomes.
+
+#Finally, we parsed the filtered set of blast hits to calculate the HGT counts for each pair of bacterial species in each pair of host individuals (See Supplementary Table XX). 

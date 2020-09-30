@@ -1,0 +1,54 @@
+##############################################################
+######## Gene calling and annotation on HGT sequences ########
+##############################################################
+
+#Following the all-against-all blasts of isolate genomes and the filtering of blast hits/HGTs with low relative coverage, we extracted all mobile elements from the blast results and stored them in Fasta format: all_HGTs_min500bp.fas
+
+#######################################################################################
+### Gene calling with Prodigal (in the 'metagenomic' mode) and clustering with Vsearch:
+#######################################################################################
+
+prodigal -i all_HGTs_min500bp.fas -o prodigal_output.txt -g 11 -p meta -f sco -q -d all_HGTs_min500bp_genes.fas
+
+#Then we cluster fragmented and full genes using vsearch:
+#(1) Dereplicate the CDSs (from prodigal) with vsearch --derep_prefix
+#(2) Cluster the dereplicated CDSs at 0.9 identity, and output the centroids with vsearch --cluster_size
+#(3) Map the dereplicated sequences onto the centroids with vsearch --usearch_global 
+
+vsearch --derep_prefix all_HGTs_min500bp_genes.fas --threads 8 --uc all_HGTs_min500bp_genes_derep_map.uc --output all_HGTs_min500bp_genes_derep_prefix.fas
+vsearch --cluster_size all_HGTs_min500bp_genes_derep_prefix.fas --id 0.9 --sizein --sizeout --threads 8 --centroids min500_centroids.fas --clusterout_sort --consout out90cons.fna --uc min500_all_mapout_centroids.uc
+vsearch --usearch_global all_HGTs_min500bp_genes_derep_prefix.fas --db min500_centroids.fna --id 0.9 --sizein --sizeout --threads 8 --uc min500_all_mapout_global.uc --strand both
+
+#Next we use a simple script to create the table linking each mobile gene to its centroid: mapping_file_clustering_mobileElements.txt (located at XXX)
+
+#Finally we convert the centroid gene sequences into amino acid format:
+seaview -convert -translate -o min500_centroids.faa min500_centroids.fas
+sed -i -e 's/*/X/g' min500_centroids.faa #We change the stop codon character to 'X' as interproscan does not accept '*'s.
+
+####################################################
+### Functional annotation of gene cluster centroids:
+####################################################
+
+#First with InterProScan:
+interproscan.sh -i min500_centroids.faa -f tsv -pa -goterms -cpu 8 -b min500_centroids_interpro.out
+
+#Annotation with eggNOG:
+Using http://eggnogdb.embl.de/#/app/emapper server, with default options and Diamond to retrieve homologs and annotations.
+Results are in min500_centroids.faa.emapper.annotations.txt
+
+#Annotation of CAZymes:
+Using dbCAN2 webserver: http://bcb.unl.edu/dbCAN2/blast.php, with Hmmer, Diamond and Hotpep to search for homologs to centroid sequences.
+Results are in min500_centroids.faa.dbCAN2.annotations.txt 
+
+#Annotation of virulence genes:
+#We mapped against the VFdb database, downloaded from http://www.mgc.ac.cn/VFs/main.htm
+#Let's first create the database with diamond:
+seaview -convert -translate -o VFDB_setB_aa.fas VFDB_setB_nt.fas
+diamond makedb --in VFDB_setB_aa.fas --db VFDB_setB_aa.fas
+#And now we map our centroids against the database:
+diamond blastp -d VFDB_setB_aa.fas.dmnd -q min500_centroids.faa --more-sensitive -e 0.0001 --outfmt 6 --id 30 --subject-cover 70 --query-cover 70 --max-target-seqs 1 --out min500_centroids.faa.VFdb.annotations.txt
+
+#Annotation of antibiotic resistance genes, using the Resfams database downloaded from http://www.dantaslab.org/resfams:
+hmmscan -E 0.000000000000001 --tblout min500_centroids.faa.Resfams.annotations.txt -o hmmscan_output.txt --cpu 8 db/Resfams/Resfams.hmm min500_centroids.faa
+
+#We then parsed the files min500_centroids_interpro.out, min500_centroids.faa.emapper.annotations.txt, min500_centroids.faa.dbCAN2.annotations.txt, min500_centroids.faa.VFdb.annotations.txt and min500_centroids.faa.Resfams.annotations.txt to create the final functional annotation table (table_GeneClusterCentroid_Annotations.txt), located at XXX.

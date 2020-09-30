@@ -1,0 +1,87 @@
+##############################################################
+########## Processing of shotgun metagenomics data ###########
+##############################################################
+
+#####################
+### Quality filtering
+#####################
+
+* remove adapters
+* trim low quality reads
+* remove PCR duplicates
+* remove reads mapping the human genome
+
+#We remove adapters with Trim Galore:
+trim_galore --paired --stringency 3 --nextera sample.R1.fastq sample.R2.fastq
+
+#We quality-filter reads with Trimmomatic:
+java -jar /scratch/users/mpoyet/Pipelines/bin/trimmomatic-0.36.jar PE -phred33 sample_adapt.R1.fastq sample_adapt.R2.fastq sample_adapt_trim.R1.fastq sample_adapt_trim.R1.solo.fastq sample_adapt_trim.R2.fastq sample_adapt_trim.R2.solo.fastq LEADING:20 TRAILING:20 MINLEN:50
+
+#Then we dereplicate with FastUniq:
+echo "sample_adapt_trim.R1.fastq" > list.txt
+echo "sample_adapt_trim.R2.fastq" >> list.txt
+fastuniq -i list.txt -t q -o sample_adapt_trim_derep.R1.fastq -p sample_adapt_trim_derep.R2.fastq
+
+#Then we download the human genome, version hg38:
+wget --timestamping 'ftp://hgdownload.cse.ucsc.edu/goldenPath/hg38/bigZips/hg38.fa.gz'
+
+#We index the reference file with bwa:
+bwa index hg38.fa
+
+#Then we run bwa against the human reference to filter out human reads using Samtools:
+bwa mem -t 8 hg38.fa sample_adapt_trim_derep.R1.fastq sample_adapt_trim_derep.R2.fastq | samtools fastq -f 13 -1 sample_adapt_trim_derep.R1.fastq.tmp -2 sample_adapt_trim_derep.R2.fastq.tmp -
+sed '1~4 s/$/.1/g' sample_adapt_trim_derep.R1.fastq.tmp > sample.clean.R1.fastq
+sed '1~4 s/$/.2/g' sample_adapt_trim_derep.R2.fastq.tmp > sample.clean.R2.fastq
+rm -f sample_adapt_trim_derep.R1.fastq.tmp sample_adapt_trim_derep.R2.fastq.tmp
+
+
+###############################################################################
+### Mapping of metagenomic data on isolate genomes to derive species abundances
+###############################################################################
+
+#We first randomly select 5 genomes from each species within each individual host. For species with less than 5 genomes sampled per individual, we conserve all genomes. The abundance of each genome is derived using coverage data of metagenomic reads. Final per-individual species abundances are derived by averaging genome abundances.
+
+#Indexing of each selected genome with bowti2-build:
+bowtie2-build Genomes/genome_assembly.fas IndexedGenomes/genome_assembly.fas
+
+#Mapping of metagenomics reads with Bowtie2 to get the per-base coverage of the reference isolate genome:
+bowtie2 -1 sample.clean.R1.fastq -2 sample.clean.R2.fastq -x IndexedGenomes/genome_assembly.fas -S sample.genome.reads.aligned.sam --no-unal --n-ceil L,0,0.01 --dovetail --no-mixed -D 25 -R 4 -N 0 -L 18 -i S,1,0.50 -X 2000
+samtools view -b -o sample.genome.reads.aligned.bam sample.genome.reads.aligned.sam
+samtools sort -o sample.genome.reads.aligned.sorted.bam sample.genome.reads.aligned.bam
+samtools depth -aa -Q40 -q30 -l50 sample.genome.reads.aligned.sorted.bam > sample.genome.reads.aligned.sorted.depth
+
+#We calculate the number of paired-reads in each metagenomic sample (T):
+awk '{s++}END{print s/4}' sample.clean.R1.fastq > sample.clean.R1.readNumber.txt
+
+#We extract the average read length for each metagenomic sample from the bam file (L):
+samtools view -q30 sample.genome.reads.aligned.sorted.bam | awk '{print length($10)}' | awk '{ total += $1 } END { print total/NR }' > sample.clean.R1.averageReadLength.txt
+
+#Then we use the *sorted.depth files to calculate the mean coverage for every pair of metaG and reference genome (K)
+
+#Finally, we use simple scripts to calculate the average species abundance in each host individual using the per base coverage K, the average read length L, the size of each genome S and the total number of reads T in the shotgun data to calculate the relative abundance A of each genome in the metagenome with A = (K*S/L) / T.
+
+
+#################################################################
+### OTU profiling, taxonomic calling and diversity investigations
+#################################################################
+
+#OTU calling with Kraken2:
+kraken2 --db kraken2_db --paired --threads 8 --output output_kraken2_sample.txt --report report_kraken2_sample.txt --report-zero-counts sample.clean.R1.fastq sample.clean.R2.fastq
+
+#We refine taxonomies with Bracken:
+python /scratch/users/mpoyet/bin/Bracken/src/est_abundance.py -i report_kraken2_sample.txt -k database150mers.kmer_distrib -o report_bracken_S_sample.txt -l S -t 100
+
+#We build the OTU table with a simple script that parses all bracken reports
+
+#Then in R:
+library(vegan)
+library(ape)
+#We filter out taxa that we don't want - phages, homo sapiens (remaining reads still mapping against the human genome), etc.
+#We rarefy the OTU table to the minimum number of reads across all samples:
+otutable_r=rrarefy(otutable,min(apply(otutable,1,sum)))
+#We calculate Bray-Curtis distances:
+braycurtis=vegdist(otutable_r,method="bray")
+#We calculate the PCoA:
+braycurtis_pcoa=pcoa(braycurtis)
+
+

@@ -1,0 +1,40 @@
+#############################################
+######### Core/Pan genome analysis ##########
+#############################################
+
+### We computed core and pan genomes with the program Roary for species B. ovatus, B. fragilis, B. vulgatus, B. longum and A. muciniphila sampled from individual 'am', and for B. fragilis sampled from individuals L03, L04, L05, L06, L07 (Zhao et al., 2019).
+
+### GFF3 files for each genome are needed to run Roary (see Roary's manual)
+#We run prokka on each genome assembly:
+prokka --outdir Prokka_genome --prefix genome_prokka genome1_final.scaffolds.fasta
+
+#Let's consider all GFF3 files for a given species sampled in a given individual are in directory 'GffFiles'. We now run Roary to compute core and pan genomes:
+singularity exec roary.img roary -p 8 -f ${i} -e -n -i 90 -cd 95 GffFiles/*gff
+
+#Then we turn the presence/absence csv file produced by Roary into a gene count table using an home-made script.
+
+#Now we correct the gene table accounting for the coverage of each gene.
+#We first map fastq reads onto each genome:
+bowtie2-build genome1_final.scaffolds.fasta genome1_final.scaffolds.fasta
+bowtie2 -1 genome1.R1.trim.fastq -2 genome1.R2.trim.fastq -x genome1_final.scaffolds.fasta -S genome1_reads.aligned.sam --no-unal --n-ceil L,0,0.01 --dovetail --no-mixed -D 25 -R 4 -N 0 -L 18 -i S,1,0.50 -X 2000
+samtools view -b -o genome1_reads.aligned.bam genome1_reads.aligned.sam
+samtools sort -o genome1_reads.aligned.sorted.bam genome1_reads.aligned.bam
+samtools depth -aa -Q30 -q30 -l50 genome1_reads.aligned.sorted.bam > genome1_reads.aligned.sorted.depth
+
+#Using a script, we use the per-base coverage file (genome1_reads.aligned.sorted.depth) and the gff file of each genome to compute the average per-base coverage for each CDS.
+
+#Now, some genes in a genome might be absent because they were not assembled into a contig, and so Roary couldn't infer their presence. So we took the pangenome of each species in each individual, and completed all gene profiles with all genes missing in the Roary gene profile but present in the pangenome. For this, we added to each repertoire of gene a representative sequence of each missing gene cluster, to generate a file named 'genome1.completedGeneRepertoire.ffn'. 
+
+#Then we mapped reads against completed gene repertoires with Bbmap:
+bbmap.sh in1=genome1.R1.trim.fastq in2=genome1.R2.trim.fastq ref=genome1.completedGeneRepertoire.ffn covstats=genome1.completed.cov.txt scafstats=genome1.completed.scaf.txt threads=8 out=genome1.sam nodisk > /dev/null
+pileup.sh in=genome1.sam out=genome1.perscaff.cov.txt basecov=genome1.perbase.cov.txt > /dev/null
+
+#Then we created a script to parse the per gene, per scaffold and per base coverage files to call genes being present or absent if:
+- Present: genes must be covered by a minimum of 20 reads over 90% of their length, and have a minimum relative gene coverage of 0.2 compared to the average genome coverage
+- Present, but originally called absent: same as above, but the gene is also required to have less than 30% ambiguous mappings to be called present.
+- Absent: genes that don't match above criteria to be called 'present'.
+
+#Finally, we used all corrected genome-level profiles of gene presence/absence to reconstruct the table of gene presence/absence with all genomes and gene families.
+
+#We removed genomes from the gene table that had too low levels of completness or too high levels of contamination based on CheckM statistics, or that were outliers in the distribution of average genomic read coverage.
+  

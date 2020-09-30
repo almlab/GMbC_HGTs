@@ -1,0 +1,90 @@
+#############################################
+############## Genome Assembly ##############
+#############################################
+
+### Quality filtering
+
+cutadapt -a CTGTCTCTTAT -A CTGTCTCTTAT -o genome.R1.cut.fastq -p genome.R2.cut.fastq genome.R1.fastq genome.R2.fastq
+java -jar trimmomatic-0.36.jar PE -phred33 genome.R1.cut.fastq genome.R2.cut.fastq genome.R1.trim.fastq genome.R1.trim.solo.fastq genome.R2.trim.fastq genome.R2.trim.solo.fastq LEADING:3 TRAILING:3 SLIDINGWINDOW:5:20 MINLEN:50
+
+
+
+### Genome assembly
+
+#Spades (contig assembly):
+/scratch/users/mpoyet/bin/SPAdes-3.9.1-Linux/bin/spades.py -1 genome.R1.trim.fastq -2 genome.R2.trim.fastq -t 16 --careful -o ResultsSpades
+
+#SSPACE (Scaffolding of contigs):
+SSPACE_Standard_v3.0.pl -l library_sspace.txt -s contigs.fasta -b SSPACE" >> spades_${i}.sbatch
+(library_sspace.txt file is a text file that contains the average insert size and the standard deviation for the corresponding flowcell).
+
+#GapFiller (Fill gaps between contigs):
+perl GapFiller.pl -l library_sspace.txt -s SSPACE/genome.final.scaffolds.fasta -b GAPFILLER
+
+#We remove small contigs 
+cp GAPFILLER/GAPFILLER.gapfilled.final.fa genome_withsmallContigs.scaffolds.fasta
+./removeSmallContigs genome_withsmallContigs.scaffolds.fasta 1000 genome_final.scaffolds.fasta
+
+#Coverage calculation with BBmap:
+bbmap.sh in1=genome.R1.trim.fastq in2=genome.R2.trim.fastq ref=genome_final.scaffolds.fasta covstats=covstats_bbmap_genome.txt &> summary_results_bbmap_genome.txt
+
+
+
+### Genome annotation and statistics
+
+#Genome annotation with Prokka:
+prokka --outdir Prokka.1 --prefix genome_prokka genome_final.scaffolds.fasta
+
+#Genome assembly statistics with CheckM:
+checkm lineage_wf --tab_table -f results_checkM_genome.txt -t 8 -x fna Prokka.1/ Checkm/
+
+#For all genomes that pass quality filtering (contamination < 10, completeness > 90%), we collect more data on the assembly using CheckM:
+checkm tree_qa -f results_checkM_tree_qa_genome.txt -o 2 Checkm/
+
+
+
+### Taxonomy calling
+
+#We first cluster all our genomes based on genomic distances. Then we call a taxonomy using a reference collection of NCBI genomes. We use the MASH program to calculate genomic distances.
+
+#We list all genomes:
+find . -type f -name *_final.scaffolds.fasta > list_of_all_genomes_beforeClustering.txt
+
+#First we compute the sketch file:
+mash sketch -p 16 -o all_genomes_BIOML_library -l list_of_all_genomes_beforeClustering.txt
+
+#Then we compute all distances:
+/scratch/users/mgroussi/bin/Mash/mash dist -p 16 all_genomes_BIOML_library.msh all_genomes_BIOML_library.msh > results_allpairwiseD_rawMash_BIOML.txt
+
+#We reformat the table to get genome pairs and distances in tab format: results_allpairwiseD_tabMash_BIOML.txt
+
+#We use R to cluster genomes into groups of genomes with genomic distances below 0.05:
+library(micropan)
+mat=read.table("results_allpairwiseD_tabMash_BIOML.txt",sep='\t',h=T)
+mat$Sequence.A=as.vector(mat$Sequence.A)
+mat$Sequence.B=as.vector(mat$Sequence.B)
+bC=bClust(mat,linkage="complete",threshold=0.05)
+bCdataframe=data.frame(names(bC),bC)
+colnames(bCdataframe)=c("genomes","cluster")
+write.table(bCdataframe,file="speciesClusters_BIOML_genomes.txt",row.names=F)
+save(bC,file="bClust_variable_completeLinkage_005threshold.Rdata")
+
+#we download all assembly genomes from the NCBI:
+cat assembly_summary_ncbi_withoutContamGenomes.txt | while read i; do
+  ftp=$(echo "$i" | cut -f1)
+  pattern=$(echo "${ftp##*/}")
+  name=$(echo "$i" | cut -f2)
+  name2=${name// /_}
+  strain=$(echo "$i" | cut -f3)
+  strain2=${strain// /_}   
+  wget -O "$name2"_"$strain2"_genomic.fna.gz "$ftp"/${pattern}_genomic.fna.gz
+  gunzip "$name2"_"$strain2"_genomic.fna.gz
+done
+
+#We create the mash sketch file from all NCBI genomes:
+ls *_genomic.fna > list_of_all_NCBI_assemblies.txt
+mash sketch -p 16 -o all_genomes_NCBI -l list_of_all_NCBI_assemblies.txt
+
+#Using a representative genome from each cluster, we then calculate the distance between this genome and all NCBI genomes. The output must be sorted by distance values to get the taxonomies of closest genomes:
+mash dist all_genomes_NCBI.msh genome_final.scaffolds.fasta -v 0.0000000001
+
