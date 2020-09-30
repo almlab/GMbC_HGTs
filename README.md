@@ -6,6 +6,10 @@ This repository contains scripts and command lines used to generate and analyze 
 Scripts contain command lines for:
 
 	Genome assembly, genome annotation and taxonomic calling
+	
+	HGT detection and quality filtering
+	
+	Annotation of transferred CDS
 
 	Core and Pan-genome analysis
 
