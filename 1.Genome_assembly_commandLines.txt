@@ -12,7 +12,7 @@ java -jar trimmomatic-0.36.jar PE -phred33 genome.R1.cut.fastq genome.R2.cut.fas
 ### Genome assembly
 
 #Spades (contig assembly):
-/scratch/users/mpoyet/bin/SPAdes-3.9.1-Linux/bin/spades.py -1 genome.R1.trim.fastq -2 genome.R2.trim.fastq -t 16 --careful -o ResultsSpades
+spades.py -1 genome.R1.trim.fastq -2 genome.R2.trim.fastq -t 16 --careful -o ResultsSpades
 
 #SSPACE (Scaffolding of contigs):
 SSPACE_Standard_v3.0.pl -l library_sspace.txt -s contigs.fasta -b SSPACE" >> spades_${i}.sbatch
@@ -54,7 +54,7 @@ find . -type f -name *_final.scaffolds.fasta > list_of_all_genomes_beforeCluster
 mash sketch -p 16 -o all_genomes_BIOML_library -l list_of_all_genomes_beforeClustering.txt
 
 #Then we compute all distances:
-/scratch/users/mgroussi/bin/Mash/mash dist -p 16 all_genomes_BIOML_library.msh all_genomes_BIOML_library.msh > results_allpairwiseD_rawMash_BIOML.txt
+mash dist -p 16 all_genomes_BIOML_library.msh all_genomes_BIOML_library.msh > results_allpairwiseD_rawMash_BIOML.txt
 
 #We reformat the table to get genome pairs and distances in tab format: results_allpairwiseD_tabMash_BIOML.txt
 
