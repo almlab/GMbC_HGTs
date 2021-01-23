@@ -1,0 +1,139 @@
+#This script allows to replicate the main results presented in Fig. 3A and Fig. 4B:
+# - comparing observed within-person  HGT counts to expected within-person counts with the complete dataset
+# - comparing observed Urban&Industrialized HGT counts to expected Urban&Industrialized counts
+
+###################################
+###### We first load tables: ######
+###################################
+
+#Supp Table 1 - Individual metadata
+metadata=read.table("table_individuals_country_locality.txt",sep='\t',h=T,row.names=1,check.names=F)
+#Supp Table 5 - HGT data (440,932 entries)
+hgt=read.table("table_hgts.txt",sep='\t',h=T)
+
+############################################################################################
+############################################################################################
+### Comparison within-person vs. between-people HGTs with the complete dataset (Fig. 3A) ###
+############################################################################################
+############################################################################################
+
+ind1=sapply(strsplit(hgt$Individual_pair,"-"),"[",1)
+ind2=sapply(strsplit(hgt$Individual_pair,"-"),"[",2)
+sum(hgt[which(ind1==ind2),"N_genome_pairs"])
+
+ind_pairs=unique(hgt$Individual_pair)
+same_ind=function(x){
+  inds=strsplit(x, "-")
+  if(inds[[1]][1]==inds[[1]][2])
+    return(TRUE)
+  else
+    return(FALSE)
+}
+within_ind_pairs=ind_pairs[sapply(ind_pairs,same_ind)]
+between_ind_pairs=ind_pairs[!sapply(ind_pairs,same_ind)]
+
+library(reshape2)
+HGTfreqs10kb=acast(hgt,Species_pair~Individual_pair,value.var="HGTfreq_10kb")
+HGTfreqs10kb_w=HGTfreqs10kb[,within_ind_pairs]
+HGTfreqs10kb_w_means=apply(HGTfreqs10kb_w,1,mean,na.rm=T)
+HGTfreqs10kb_b=HGTfreqs10kb[,between_ind_pairs]
+HGTfreqs10kb_b_means=apply(HGTfreqs10kb_b,1,mean,na.rm=T)
+
+genome_pairs_count=acast(hgt,Species_pair~Individual_pair,value.var="N_genome_pairs")
+genome_pairs_count_w=genome_pairs_count[,within_ind_pairs]
+genome_pairs_count_w_sum=apply(genome_pairs_count_w,1,sum,na.rm=T)
+genome_pairs_count_b=genome_pairs_count[,between_ind_pairs]
+genome_pairs_count_b_sum=apply(genome_pairs_count_b,1,sum,na.rm=T)
+
+sp_pairs_inter=which(genome_pairs_count_w_sum>0 & genome_pairs_count_b_sum>0)
+total_HGTcount_w=0
+total_HGTcount_w_exp=0
+total_HGTcount_b=0
+total_HGTcount_b_exp=0
+for(i in sp_pairs_inter){
+  total_HGTcount_w=total_HGTcount_w+as.numeric(genome_pairs_count_w_sum[i]*HGTfreqs10kb_w_means[i])
+  total_HGTcount_b=total_HGTcount_b+as.numeric(genome_pairs_count_b_sum[i]*HGTfreqs10kb_b_means[i])
+  total_HGTcount_w_exp=total_HGTcount_w_exp+as.numeric(genome_pairs_count_w_sum[i]*HGTfreqs10kb_b_means[i])
+  total_HGTcount_b_exp=total_HGTcount_b_exp+as.numeric(genome_pairs_count_b_sum[i]*HGTfreqs10kb_w_means[i])
+}
+
+##We calculate the pvalue with the Poisson distribution function:
+#Observed within-person HGT count:
+total_HGTcount_w
+#Expected within-person HGT count:
+total_HGTcount_w_exp
+#Probability that the observed within-person count is lower than the expected count:
+1-ppois(total_HGTcount_w,lambda=total_HGTcount_w_exp)
+
+#Observed between-people HGT count:
+total_HGTcount_b
+#Expected between-people HGT count:
+total_HGTcount_b_exp
+#Probability that the observed between-people count is larger than the expected count:
+ppois(total_HGTcount_b,lambda=total_HGTcount_b_exp)
+
+############################################################################################
+############################################################################################
+######## Comparison Urban Industrialized vs. Rural Non-industrialized HGTs (Fig. 4B) #######
+############################################################################################
+############################################################################################
+
+#Note: UI = Urban Industrialized; RN: Rural Non-industrialized.
+
+#We get all individuals in each category:
+inds_urban_indus=sort(row.names(metadata)[which(metadata$Industrialization=="Industrialized" & metadata$Urbanization=="Urban")])
+inds_rural_nonindus=sort(row.names(metadata)[which(metadata$Industrialization=="Non-industrialized" & metadata$Urbanization=="Rural")])
+
+HGTfreqs500bp=acast(hgt,Species_pair~Individual_pair,value.var="HGTfreq_500bp")
+
+getallpairs=function(x){
+  pairs=c()
+  for(i in 1:length(x)){
+    for(j in i:length(x)){
+      pairs=c(pairs,paste(x[i],x[j],sep="-"))
+    }
+  }  
+  return(pairs)
+}
+pairs_urban_indus=getallpairs(inds_urban_indus)
+pairs_rural_nonindus=getallpairs(inds_rural_nonindus)
+pairs_rural_nonindus=pairs_rural_nonindus[!pairs_rural_nonindus%in%"6174TE-6174TE"]
+
+HGTfreqs500bp_ui=HGTfreqs500bp[,pairs_urban_indus]
+HGTfreqs500bp_ui_means=apply(HGTfreqs500bp_ui,1,mean,na.rm=T)
+HGTfreqs500bp_rn=HGTfreqs500bp[,pairs_rural_nonindus]
+HGTfreqs500bp_rn_means=apply(HGTfreqs500bp_rn,1,mean,na.rm=T)
+
+genome_pairs_count_ui=genome_pairs_count[,pairs_urban_indus]
+genome_pairs_count_ui_sum=apply(genome_pairs_count_ui,1,sum,na.rm=T)
+genome_pairs_count_rn=genome_pairs_count[,pairs_rural_nonindus]
+genome_pairs_count_rn_sum=apply(genome_pairs_count_rn,1,sum,na.rm=T)
+
+positions=which(genome_pairs_count_ui_sum>0 & genome_pairs_count_rn_sum>0)
+
+total_HGTcount_ui=0
+total_HGTcount_ui_exp=0
+total_HGTcount_rn=0
+total_HGTcount_rn_exp=0
+for(i in positions){
+  total_HGTcount_ui=total_HGTcount_ui+as.numeric(genome_pairs_count_ui_sum[i]*HGTfreqs500bp_ui_means[i])
+  total_HGTcount_rn=total_HGTcount_rn+as.numeric(genome_pairs_count_rn_sum[i]*HGTfreqs500bp_rn_means[i])
+  total_HGTcount_ui_exp=total_HGTcount_ui_exp+as.numeric(genome_pairs_count_ui_sum[i]*HGTfreqs500bp_rn_means[i])
+  total_HGTcount_rn_exp=total_HGTcount_rn_exp+as.numeric(genome_pairs_count_rn_sum[i]*HGTfreqs500bp_ui_means[i])
+}
+
+##We calculate the pvalue with the Poisson distribution function:
+#Observed UI HGT count:
+total_HGTcount_ui
+#Expected UI HGT count:
+total_HGTcount_ui_exp
+#Probability that the observed within-person count is lower than the expected count:
+1-ppois(total_HGTcount_ui,lambda=total_HGTcount_ui_exp)
+
+#Observed RN HGT count:
+total_HGTcount_rn
+#Expected RN HGT count:
+total_HGTcount_rn_exp
+#Probability that the observed between-people count is larger than the expected count:
+ppois(total_HGTcount_rn,lambda=total_HGTcount_rn_exp)
+
